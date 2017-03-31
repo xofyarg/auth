@@ -155,6 +155,37 @@ func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
 	conf := a.conf
 	a.confLock.Unlock()
 
+	match(w, r, username, conf)
+}
+
+func (a *Auth) BasicAuth(w http.ResponseWriter, r *http.Request) {
+	a.confLock.Lock()
+	conf := a.conf
+	a.confLock.Unlock()
+
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="Please login."`)
+		http.Error(w, "", http.StatusUnauthorized)
+		return
+	}
+	user, ok := conf.Users[username]
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="Please login."`)
+		http.Error(w, "wrong username/password", http.StatusUnauthorized)
+		return
+	}
+	if !user.VerifyPass(password) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="Please login."`)
+		http.Error(w, "wrong username/password", http.StatusUnauthorized)
+		return
+	}
+
+	match(w, r, username, conf)
+}
+
+func match(w http.ResponseWriter, r *http.Request,
+	username string, conf *AuthConfig) {
 	user, ok := conf.Users[username]
 	if !ok {
 		zap.L().Debug("no registered user found",
@@ -162,8 +193,8 @@ func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusForbidden)
 	}
 
-	uri := r.Header.Get(conf.Proxy.URI)
 	host := r.Header.Get(conf.Proxy.Host)
+	uri := r.Header.Get(conf.Proxy.URI)
 
 	zap.L().Debug("matching rules",
 		zap.String("user", username),
@@ -189,12 +220,25 @@ func (a *Auth) Log(w http.ResponseWriter, r *http.Request, status int) {
 	if err == nil && !session.IsNew {
 		user = session.Values["user"].(string)
 	}
-	//user, http.code, ua, remote_addr
+
+	if user == "" {
+		user = w.Header().Get("X-User")
+	}
+
+	a.confLock.Lock()
+	conf := a.conf
+	a.confLock.Unlock()
+
+	host := r.Header.Get(conf.Proxy.Host)
+	uri := r.Header.Get(conf.Proxy.URI)
+
 	zap.L().Info("",
-		zap.String("remote", r.RemoteAddr),
+		//zap.String("remote", r.RemoteAddr),
 		zap.String("user-agent", r.UserAgent()),
 		zap.String("method", r.Method),
-		zap.String("uri", r.RequestURI),
+		zap.String("endpoint", r.RequestURI),
+		zap.String("host", host),
+		zap.String("uri", uri),
 		zap.Int("status", status),
 		zap.String("user", user),
 	)
@@ -261,6 +305,7 @@ func serve(auth *Auth) error {
 	router.HandleFunc(prefix+"/", auth.Status).Methods("GET")
 	router.HandleFunc(prefix+"/", auth.Action).Methods("POST")
 	router.HandleFunc(prefix+"/verify/", auth.Verify)
+	router.HandleFunc(prefix+"/basic/", auth.BasicAuth)
 	//h := handlers.CombinedLoggingHandler(os.Stdout, r)
 
 	logger := func(w http.ResponseWriter, r *http.Request) {

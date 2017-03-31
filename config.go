@@ -39,8 +39,8 @@ type AuthConfig struct {
 	}
 
 	Proxy struct {
-		Host string
-		URI  string
+		Host   string
+		URI    string
 	}
 
 	StoragePath string
