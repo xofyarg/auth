@@ -25,10 +25,11 @@ const (
 )
 
 type AuthConfig struct {
-	Log    string
-	Addr   string
-	Prefix string
-	Salt   string
+	Log         string
+	Addr        string
+	Prefix      string
+	PassSalt    string
+	SessionSalt string
 
 	Cookie struct {
 		TTL     time.Duration
@@ -39,8 +40,8 @@ type AuthConfig struct {
 	}
 
 	Proxy struct {
-		Host   string
-		URI    string
+		Host string
+		URI  string
 	}
 
 	StoragePath string
@@ -113,8 +114,8 @@ func (user *User) MatchRule(host, uri string) RuleAction {
 	return ActionNoMatch
 }
 
-func (user *User) VerifyPass(s string) bool {
-	data := sha256.Sum256([]byte(s + Salt))
+func (user *User) VerifyPass(pass, salt string) bool {
+	data := sha256.Sum256([]byte(pass + salt))
 	return hex.EncodeToString(data[:]) == user.Pass
 }
 

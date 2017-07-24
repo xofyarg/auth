@@ -79,7 +79,7 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wrong username/password", http.StatusForbidden)
 		return
 	}
-	if !user.VerifyPass(password) {
+	if !user.VerifyPass(password, a.conf.PassSalt) {
 		http.Error(w, "wrong username/password", http.StatusForbidden)
 		return
 	}
@@ -175,7 +175,7 @@ func (a *Auth) BasicAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wrong username/password", http.StatusUnauthorized)
 		return
 	}
-	if !user.VerifyPass(password) {
+	if !user.VerifyPass(password, a.conf.PassSalt) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Please login."`)
 		http.Error(w, "wrong username/password", http.StatusUnauthorized)
 		return
@@ -191,6 +191,7 @@ func match(w http.ResponseWriter, r *http.Request,
 		zap.L().Debug("no registered user found",
 			zap.String("user", username))
 		http.Error(w, "", http.StatusForbidden)
+		return
 	}
 
 	host := r.Header.Get(conf.Proxy.Host)
@@ -269,7 +270,7 @@ func main() {
 		Secure:   auth.conf.Cookie.Secure,
 	}
 
-	auth.activeSessions = NewStupidStore()
+	auth.activeSessions = NewStupidStore(auth.conf.SessionSalt)
 	err = auth.activeSessions.Load(auth.conf.StoragePath)
 	if err != nil {
 		zap.L().Warn("cannot load session data", zap.Error(err))

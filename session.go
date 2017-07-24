@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/ioutil"
 	"sync"
 	"time"
@@ -23,6 +25,7 @@ type SessionStore interface {
 }
 
 type StupidStore struct {
+	salt string
 	sync.Mutex
 	store map[string]map[string]interface{}
 }
@@ -33,9 +36,10 @@ type StupidData struct {
 	TTL        time.Duration
 }
 
-func NewStupidStore() *StupidStore {
+func NewStupidStore(salt string) *StupidStore {
 	return &StupidStore{
 		store: make(map[string]map[string]interface{}),
+		salt:  salt,
 	}
 }
 
@@ -48,7 +52,10 @@ func (ss *StupidStore) Get(user, id string) (interface{}, bool) {
 		return nil, false
 	}
 
-	data, ok := sessions[id]
+	h := sha256.Sum256([]byte(id + ss.salt))
+	sessionHash := hex.EncodeToString(h[:])
+
+	data, ok := sessions[sessionHash]
 	if !ok {
 		return nil, false
 	}
@@ -81,7 +88,11 @@ func (ss *StupidStore) Add(user, id string, data interface{}) {
 		sessions = make(map[string]interface{})
 		ss.store[user] = sessions
 	}
-	sessions[id] = data
+
+	h := sha256.Sum256([]byte(id + ss.salt))
+	sessionHash := hex.EncodeToString(h[:])
+
+	sessions[sessionHash] = data
 }
 
 func (ss *StupidStore) Remove(user, id string) {
