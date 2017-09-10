@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	yaml "gopkg.in/yaml.v2"
@@ -32,6 +33,7 @@ type AuthConfig struct {
 	SessionSalt string
 
 	Cookie struct {
+		Name    string
 		TTL     time.Duration
 		HashKey string
 		Secure  bool
@@ -48,6 +50,8 @@ type AuthConfig struct {
 
 	RawUsers []User           `yaml:"users"`
 	Users    map[string]*User `yaml:"-"`
+
+	sync.Mutex
 }
 
 type User struct {

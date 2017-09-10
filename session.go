@@ -10,10 +10,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-const (
-	SessionName = "pa"
-)
-
 type SessionStore interface {
 	Get(user, sid string) (interface{}, bool)
 	GetAll(user string) map[string]interface{}

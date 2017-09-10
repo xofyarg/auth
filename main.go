@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -18,12 +17,15 @@ type Auth struct {
 	cookieStore    *sessions.CookieStore
 	activeSessions SessionStore
 
-	conf     *AuthConfig
-	confLock sync.Mutex
+	conf *AuthConfig
 }
 
 func (a *Auth) Status(w http.ResponseWriter, r *http.Request) {
-	session, err := a.cookieStore.Get(r, SessionName)
+	a.conf.Lock()
+	conf := a.conf
+	a.conf.Unlock()
+
+	session, err := a.cookieStore.Get(r, conf.Cookie.Name)
 	if err != nil {
 		http.Error(w, "", http.StatusInternalServerError)
 		zap.L().Error("cannot create session", zap.Error(err))
@@ -35,7 +37,7 @@ func (a *Auth) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie(SessionName)
+	cookie, err := r.Cookie(conf.Cookie.Name)
 	if err != nil {
 		TemplateLogin.Execute(w, nil)
 		return
@@ -70,21 +72,21 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	a.confLock.Lock()
+	a.conf.Lock()
 	conf := a.conf
-	a.confLock.Unlock()
+	a.conf.Unlock()
 
 	user, ok := conf.Users[username]
 	if !ok {
 		http.Error(w, "wrong username/password", http.StatusForbidden)
 		return
 	}
-	if !user.VerifyPass(password, a.conf.PassSalt) {
+	if !user.VerifyPass(password, conf.PassSalt) {
 		http.Error(w, "wrong username/password", http.StatusForbidden)
 		return
 	}
 
-	session, err := a.cookieStore.Get(r, SessionName)
+	session, err := a.cookieStore.Get(r, conf.Cookie.Name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -99,19 +101,23 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 			w.Header().Get("Set-Cookie"),
 			"; ",
 		)[0],
-		SessionName+"=",
+		conf.Cookie.Name+"=",
 	)
 
 	a.activeSessions.Add(username, sid, &StupidData{
 		UserAgent:  r.UserAgent(),
 		CreateTime: time.Now(),
-		TTL:        a.conf.Cookie.TTL,
+		TTL:        conf.Cookie.TTL,
 	})
 	http.Error(w, "logged in", http.StatusOK)
 }
 
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
-	session, err := a.cookieStore.Get(r, SessionName)
+	a.conf.Lock()
+	conf := a.conf
+	a.conf.Unlock()
+
+	session, err := a.cookieStore.Get(r, conf.Cookie.Name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -122,7 +128,7 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := session.Values["user"].(string)
-	cookie, _ := r.Cookie(SessionName)
+	cookie, _ := r.Cookie(conf.Cookie.Name)
 	a.activeSessions.Remove(username, cookie.Value)
 	session.Options.MaxAge = -1
 	session.Save(r, w)
@@ -130,7 +136,11 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
-	session, err := a.cookieStore.Get(r, SessionName)
+	a.conf.Lock()
+	conf := a.conf
+	a.conf.Unlock()
+
+	session, err := a.cookieStore.Get(r, conf.Cookie.Name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -143,7 +153,7 @@ func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := session.Values["user"].(string)
-	cookie, _ := r.Cookie(SessionName)
+	cookie, _ := r.Cookie(conf.Cookie.Name)
 	if _, ok := a.activeSessions.Get(username, cookie.Value); !ok {
 		session.Options.MaxAge = -1
 		session.Save(r, w)
@@ -151,17 +161,13 @@ func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.confLock.Lock()
-	conf := a.conf
-	a.confLock.Unlock()
-
 	match(w, r, username, conf)
 }
 
 func (a *Auth) BasicAuth(w http.ResponseWriter, r *http.Request) {
-	a.confLock.Lock()
+	a.conf.Lock()
 	conf := a.conf
-	a.confLock.Unlock()
+	a.conf.Unlock()
 
 	username, password, ok := r.BasicAuth()
 	if !ok {
@@ -175,7 +181,7 @@ func (a *Auth) BasicAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wrong username/password", http.StatusUnauthorized)
 		return
 	}
-	if !user.VerifyPass(password, a.conf.PassSalt) {
+	if !user.VerifyPass(password, conf.PassSalt) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Please login."`)
 		http.Error(w, "wrong username/password", http.StatusUnauthorized)
 		return
@@ -216,7 +222,11 @@ func match(w http.ResponseWriter, r *http.Request,
 }
 
 func (a *Auth) Log(w http.ResponseWriter, r *http.Request, status int) {
-	session, err := a.cookieStore.Get(r, SessionName)
+	a.conf.Lock()
+	conf := a.conf
+	a.conf.Unlock()
+
+	session, err := a.cookieStore.Get(r, conf.Cookie.Name)
 	var user string
 	if err == nil && !session.IsNew {
 		user = session.Values["user"].(string)
@@ -225,10 +235,6 @@ func (a *Auth) Log(w http.ResponseWriter, r *http.Request, status int) {
 	if user == "" {
 		user = w.Header().Get("X-User")
 	}
-
-	a.confLock.Lock()
-	conf := a.conf
-	a.confLock.Unlock()
 
 	host := r.Header.Get(conf.Proxy.Host)
 	uri := r.Header.Get(conf.Proxy.URI)
