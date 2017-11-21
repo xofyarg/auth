@@ -14,7 +14,6 @@ import (
 
 const (
 	RePrefix = "re:"
-	Salt     = "RePPeP"
 )
 
 type RuleAction int
