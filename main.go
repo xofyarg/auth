@@ -44,9 +44,30 @@ func (a *Auth) Status(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := session.Values["user"].(string)
+	current, ok := a.activeSessions.Get(username, cookie.Value)
+	if !ok {
+		TemplateLogin.Execute(w, nil)
+		return
+	}
 
-	if _, ok := a.activeSessions.Get(username, cookie.Value); ok {
-		TemplateStatus.Execute(w, nil)
+	if data := a.activeSessions.GetAll(username); data != nil {
+		var cur string
+		for id, session := range data {
+			if current.UserAgent == session.UserAgent &&
+				current.CreateTime == session.CreateTime {
+				cur = id
+				break
+			}
+		}
+
+		err := TemplateStatus.Execute(w,
+			struct {
+				Current  string
+				Sessions map[string]*Session
+			}{cur, data})
+		if err != nil {
+			zap.L().Error("status template", zap.Error(err))
+		}
 		return
 	}
 
@@ -104,9 +125,9 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		conf.Cookie.Name+"=",
 	)
 
-	a.activeSessions.Add(username, sid, &StupidData{
+	a.activeSessions.Add(username, sid, &Session{
 		UserAgent:  r.UserAgent(),
-		CreateTime: time.Now(),
+		CreateTime: time.Now().UTC(),
 		TTL:        conf.Cookie.TTL,
 	})
 	http.Error(w, "logged in", http.StatusOK)
@@ -128,11 +149,17 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := session.Values["user"].(string)
-	cookie, _ := r.Cookie(conf.Cookie.Name)
-	a.activeSessions.Remove(username, cookie.Value)
-	session.Options.MaxAge = -1
-	session.Save(r, w)
-	http.Error(w, "logged out", http.StatusOK)
+
+	sid := r.FormValue("remove")
+	if sid != "" {
+		a.activeSessions.RemoveHash(username, sid)
+	} else {
+		cookie, _ := r.Cookie(conf.Cookie.Name)
+		a.activeSessions.Remove(username, cookie.Value)
+		session.Options.MaxAge = -1
+		session.Save(r, w)
+		http.Error(w, "logged out", http.StatusOK)
+	}
 }
 
 func (a *Auth) Verify(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +292,17 @@ func main() {
 	if err != nil {
 		zap.L().Error("cannot load config", zap.Error(err))
 		os.Exit(1)
+	}
+
+	if auth.conf.Log != "" {
+		zcfg := zap.NewProductionConfig()
+		err := zcfg.Level.UnmarshalText([]byte(auth.conf.Log))
+		if err != nil {
+			zap.L().Error("cannot set log level", zap.Error(err))
+			os.Exit(1)
+		}
+		logger, _ := zcfg.Build()
+		zap.ReplaceGlobals(logger)
 	}
 
 	auth.cookieStore = sessions.NewCookieStore([]byte(auth.conf.Cookie.HashKey))
